@@ -1,0 +1,363 @@
+/*-------------------------------------------------------------------------*
+ *---									---*
+ *---		ourPascal.jj						---*
+ *---									---*
+ *---	    This file defines a parser for the ourPascal Pascal		---*
+ *---	interpreter and compiler programs.				---*
+ *---									---*
+ *---	----	----	----	----	----	----	----	----	---*
+ *---									---*
+ *---	Version 1a		2025 May 31		Joseph Phillips	---*
+ *---									---*
+ *-------------------------------------------------------------------------*/
+
+options
+{
+  LOOKAHEAD		= 2;
+  FORCE_LA_CHECK	= true;
+}
+
+
+PARSER_BEGIN(OurPascal)
+
+import java.util.List;
+import java.util.LinkedList;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.PrintStream;
+
+public class OurPascal
+{
+    public static void main(String[] args) throws Exception
+    {
+	if  (args.length == 0)
+	{
+	  System.err.println("Usage\tjava OurPascal <filePath>");
+	  return;
+	}
+
+	String	filePath	= args[0];
+
+	try
+	{
+	  List<PotentialInstruction>
+			list	= new LinkedList<>();
+	  File		file	= new File(filePath);
+	  FileReader	reader	= new FileReader(file);
+	  OurPascal	pascal	= new OurPascal(reader);
+	  ParseNode	node	= pascal.program();
+
+	  node.check();
+	  node.toAssembly(list);
+
+	  toAssembly(System.out,list);	  
+	}
+       catch  (Exception error)
+       {
+         System.err.println(error);
+       }
+    }
+
+
+    //  PURPOSE:  To print the assembly language representation of '*nodePtr' to
+    //	to 'filePtr'.  No return value.
+    static
+    void	toAssembly	(PrintStream			file,
+				 List<PotentialInstruction>	instructList
+				)
+    {
+      file.println("$beginPreAsm");
+      VarStore.get().toAssembly(file);
+
+      file.println("\n  %beginCode");
+
+      for  (PotentialInstruction instruct : instructList)
+      {
+	instruct.toText(file);
+      }
+  
+      file.println("  %endCode");
+      file.println("$endPreAsm");
+    }
+
+}
+
+PARSER_END(OurPascal)
+
+SKIP:  { " " | "\t" | "\n" | "\r"                    }
+TOKEN: { <PROGRAM: "program"| "Program"|"PROGRAM"> |
+	 <VAR: "var" | "Var" | "VAR"> |
+	 <BEGIN: "begin" | "Begin" | "BEGIN"> | 
+	 <END:   "end" | "End" | "END" > |
+	 "(" | ")" | ":=" |
+	 <IF: "if" | "If" | "IF" > |
+	 <THEN: "then" | "Then" | "THEN" > |
+	 <REPEAT: "repeat" | "Repeat" | "REPEAT" > |
+	 <UNTIL: "until" | "Until" | "UNTIL" > |
+	 <WHILE: "while" | "While" | "WHILE" > |
+	 <FOR:   "for" | "For" | "FOR" > |
+	 <DO:    "do" | "Do" | "DO" > |
+	 <TO:    "to" | "To" | "TO" > |
+	 <DOWNTO: "downto" | "Downto" | "DOWNTO" > |
+	 <WRITE: "WRITE" | "Write" | "write"> |
+	 <WRITELN: "WRITELN" | "Writeln" | "writeln" > |
+	 <ELSE:  "else" | "Else" | "ELSE" > |
+	 "," | ";" | ":" | "." |
+	 "=" | "<>" | "<" | "<=" | ">" | ">=" |
+       	 "+" | "-" |
+	 <OR: "or" | "Or" | "OR" > |
+       	 "*" | "/" |
+	 <DIV: "div" | "Div" | "DIV" > |
+	 <MOD: "mod" | "Mod" | "MOD" > |
+	 <AND: "and" | "And" | "AND" > |
+	 <BOOLEAN: "boolean" | "Boolean" | "BOOLEAN" > |
+	 <INTEGER: "integer" | "Integer" | "INTEGER" > |
+	 <REAL: "real" | "Real" | "REAL" > |
+	 <STRING: "string" | "String" | "STRING" > |
+	 <INTEGER_CONST: (["0"-"9"])+> |
+       	 <REAL_CONST: (["0"-"9"])*"."(["0"-"9"])+> |
+	 <FALSE: "false"|"False"|"FALSE"> |
+	 <TRUE: "true"|"True"|"TRUE"> |
+         <IDENTIFIER: ["a"-"z","A"-"Z","_"](["a"-"z","A"-"Z","_","0"-"9"])* > |
+	 <STRING_CONST: ("'" (~["'"])* "'")>
+       }
+
+ParseNode	program():
+{
+  ParseNode	node;
+}
+{
+  <PROGRAM> <IDENTIFIER> ";" optionalVarSection() node = block() "."
+  { return(node); }
+}
+
+void	optionalVarSection():
+{
+}
+{
+  <VAR> varDefineList()
+|
+  { }
+}
+
+void	varDefineList():
+{
+}
+{
+   varDefine() varDefineList()
+|
+  { }
+}
+
+void	varDefine():
+{
+  Token		token	= null;
+  Type		type	= Type.NONE;
+}
+{
+  token = <IDENTIFIER> ":"
+  ( <BOOLEAN> { type = Type.BOOLEAN; }	|
+    <INTEGER> { type = Type.INTEGER; }	|
+    <REAL>    { type = Type.REAL; }  	|
+    <STRING>  { type = Type.STRING; }
+  )
+  ";"
+  {
+    VarStore.get().declare(new Variable(token.image),type);
+  }
+}
+
+
+ParseNode	block	():
+{
+  ParseNode	list;
+}
+{
+  <BEGIN>
+  ( <END>
+    { return(new BeginListParseNode()); }
+    |
+    list = statementList() (";")? <END>
+    { return(list); }
+  )
+}
+
+
+ParseNode	statementList	():
+{
+  ParseNode		instruct;
+  BeginListParseNode	list	= new BeginListParseNode();
+}
+{
+  instruct = statement() { list.appendInstruct(instruct); }
+  (";" instruct = statementList() { list.appendInstruct(instruct); } )*
+  { return(list); }
+}
+
+
+ParseNode	statement():
+{
+  Token		var;
+  ParseNode	expr;
+  ParseNode	cond;
+  ParseNode	start;
+  ParseNode	end;
+  ParseNode	body;
+  ParseNode	elseBody	= null;
+}
+{
+  var = <IDENTIFIER> ":=" expr = expression()
+  { return(new AssignParseNode
+			(new VariableParseNode
+				(VarStore.get().findExisting(var.image)),
+			 expr
+			)
+	  );
+  }
+  |
+  <IF> cond = expression() <THEN> body = statement()
+  ( <ELSE> elseBody = statement())?
+  { return(new IfParseNode(cond,body,elseBody)); }
+  |
+  <WHILE> cond = expression() <DO> body = statement()
+  { return(new WhileDoParseNode(cond,body)); }
+  |
+  <REPEAT> body = statementList() <UNTIL> cond = expression()
+  { return(new RepeatUntilParseNode(body,cond)); }
+  |
+  <FOR> var = <IDENTIFIER> ":=" start = expression()
+  (
+    <TO> end = expression() <DO> body = statement()
+    {
+      return
+	(new ForParseNode
+		(new VariableParseNode(VarStore.get().findExisting(var.image)),
+		 start,
+		 end,
+		 body,
+		 Direction.UP
+		)
+	);
+    }
+    |
+    <DOWNTO> end = expression() <DO> body = statement()
+    {
+      return
+	(new ForParseNode
+		(new VariableParseNode(VarStore.get().findExisting(var.image)),
+		 start,
+		 end,
+		 body,
+		 Direction.DOWN
+		)
+	);
+    }
+  )
+  { return(null); }
+  |
+  <BEGIN> body = statementList() <END>
+  { return(body); }
+  |
+  <WRITE> "(" expr = expression() ")"
+  { return(new WriteParseNode(false,expr)); }
+  |
+  <WRITELN> "(" expr = expression() ")"
+  { return(new WriteParseNode(true,expr)); }
+}
+
+
+ParseNode	expression ():
+{
+  ParseNode	lhs;
+  ParseNode	rhs	= null;
+  Operation	op;
+}
+{
+  lhs = term()
+   ("="  rhs=term() {return(new BinaryOpParseNode(Operation.EQUALS,lhs,rhs));}|
+    "<>" rhs=term() {return(new BinaryOpParseNode(Operation.NOT_EQUALS,lhs,rhs));} |
+    "<"  rhs=term() {return(new BinaryOpParseNode(Operation.LESSER,lhs,rhs));}|
+    "<=" rhs=term() {return(new BinaryOpParseNode(Operation.LESSER_EQUALS,lhs,rhs));}|
+    ">"  rhs=term() {return(new BinaryOpParseNode(Operation.GREATER,lhs,rhs));}|
+    ">=" rhs=term() {return(new BinaryOpParseNode(Operation.GREATER_EQUALS,lhs,rhs));}|
+    { return(lhs); }
+   )
+}
+
+ParseNode	term() :
+{
+  ParseNode	lhs;
+  ParseNode	rhs;
+}
+{
+  lhs	= factor()
+  ( "+" rhs = term()
+    { lhs = new BinaryOpParseNode(Operation.PLUS,lhs,rhs); }
+    |
+    "-" rhs = term()
+    { lhs = new BinaryOpParseNode(Operation.MINUS,lhs,rhs); }
+    |
+    <OR> rhs = term()
+    { lhs = new BinaryOpParseNode(Operation.OR,lhs,rhs); }
+  )*
+  { return(lhs); }
+}
+
+ParseNode	factor ():
+{
+  ParseNode	lhs;
+  ParseNode	rhs;
+}
+{
+  lhs	= unary()
+  (
+    "*" rhs = factor()
+    { lhs = new BinaryOpParseNode(Operation.STAR,lhs,rhs); }
+    |
+    "/" rhs = factor()
+    { lhs = new BinaryOpParseNode(Operation.SLASH,lhs,rhs); }
+    |
+    <DIV> rhs = factor()
+    { lhs = new BinaryOpParseNode(Operation.DIV,lhs,rhs); }
+    |
+    <MOD> rhs = factor()
+    { lhs = new BinaryOpParseNode(Operation.MOD,lhs,rhs); }
+    |
+    <AND> rhs = factor()
+    { lhs = new BinaryOpParseNode(Operation.AND,lhs,rhs); }
+  )*
+  { return(lhs); }
+}
+
+
+ParseNode	unary ():
+{
+  Token		token;
+  long		integer;
+  double	real;
+  ParseNode	node;
+}
+{
+  "(" node = expression() ")"
+  { return(node); }
+  |
+  token = <IDENTIFIER>
+  { return(new VariableParseNode(VarStore.get().findExisting(token.image))); }
+  |
+  token = <FALSE>
+  { return(new BoolParseNode(false)); }
+  |
+  token = <TRUE>
+  { return(new BoolParseNode(true)); }
+  |
+  token = <INTEGER_CONST>
+  { return(new IntParseNode(Long.parseLong(token.image))); }
+  |
+  token = <REAL_CONST>
+  { return(new RealParseNode(Double.parseDouble(token.image))); }
+  |
+  token = <STRING_CONST>
+  { return(new StringParseNode(token.image.substring(1,token.image.length()-1))); }
+}
